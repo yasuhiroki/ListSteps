@@ -1,70 +1,100 @@
 package yasuhiroki.liststeps
 
+import android.Manifest
+import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.gms.common.api.GoogleApiClient
-import com.google.android.gms.common.api.ResultCallback
+import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.fitness.Fitness
-import com.google.android.gms.fitness.FitnessStatusCodes
-import com.google.android.gms.fitness.data.DataSource
+import com.google.android.gms.fitness.FitnessOptions
 import com.google.android.gms.fitness.data.DataType
-import com.google.android.gms.fitness.request.DataReadRequest
-import com.google.android.gms.fitness.result.DataReadResult
-import java.util.concurrent.TimeUnit
+import com.google.android.gms.fitness.data.Field
+import com.google.android.gms.tasks.Tasks
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+
 
 class MainActivity : AppCompatActivity() {
+
+    private lateinit var stepsAdapter: StepsAdapter
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            // Permission is not granted
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.ACTIVITY_RECOGNITION),
+                1
+            )
+        }
+
+
+        stepsAdapter = StepsAdapter(mutableListOf("hoge"))
         findViewById<RecyclerView>(R.id.recycler_view).let {
-            val adapter = StepsAdapter(mutableListOf("hoge"))
-            it.adapter = adapter
+            it.adapter = stepsAdapter
             it.layoutManager = LinearLayoutManager(this)
         }
 
-        val client = GoogleApiClient.Builder(this)
-            .addApi(Fitness.HISTORY_API)
-
-        val FIT_APP_PACKAGE_NAME = "com.google.android.gms"
-
-        val dataSource = DataSource.Builder()
-            .setAppPackageName(FIT_APP_PACKAGE_NAME)
-            .setDataType(DataType.TYPE_STEP_COUNT_DELTA)
-            .setType(DataSource.TYPE_DERIVED)
-            .setStreamName("estimated_steps")
+        val fitnessOptions = FitnessOptions.builder()
+            .addDataType(DataType.TYPE_STEP_COUNT_DELTA, FitnessOptions.ACCESS_READ)
+            .addDataType(DataType.AGGREGATE_STEP_COUNT_DELTA, FitnessOptions.ACCESS_READ)
             .build()
 
-        val readRequest = DataReadRequest.Builder()
-            .aggregate(dataSource, DataType.AGGREGATE_STEP_COUNT_DELTA)
-            .bucketByTime(1, TimeUnit.DAYS)
-            .setTimeRange(date[START], date[END], TimeUnit.MILLISECONDS)
-            .build()
+        if (!GoogleSignIn.hasPermissions(
+                GoogleSignIn.getLastSignedInAccount(this),
+                fitnessOptions
+            )
+        ) {
+            GoogleSignIn.requestPermissions(
+                this, // your activity
+                2,
+                GoogleSignIn.getLastSignedInAccount(this),
+                fitnessOptions
+            )
+        } else {
+            accessGoogleFit(stepsAdapter, fitnessOptions)
+        }
+    }
 
-        val callback =
-            ResultCallback<DataReadResult> { result ->
-                // 認証切れなら再接続する
-                if (result.status.statusCode == FitnessStatusCodes.NEEDS_OAUTH_PERMISSIONS) {
-                    sClient.connect()
-                    return@ResultCallback
-                }
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (resultCode == Activity.RESULT_OK) {
+            if (requestCode == 1) {
+                val fitnessOptions = FitnessOptions.builder()
+                    .addDataType(DataType.TYPE_STEP_COUNT_DELTA, FitnessOptions.ACCESS_READ)
+                    .addDataType(DataType.AGGREGATE_STEP_COUNT_DELTA, FitnessOptions.ACCESS_READ)
+                    .build()
 
-                val total = getTotalStep(result)
+                accessGoogleFit(stepsAdapter, fitnessOptions)
+            }
+        }
+    }
 
-                if (total > 0) {
-                    if (sListener != null) {
-                        sListener.gotStep(total, sRequestCode)
-                    }
-                } else {
-                    // デグレると嫌なので、以前と同じパラメータでも取得を試す
-                    getStepLegacy(date)
+    fun accessGoogleFit(adapter: StepsAdapter, fitnessOptions: FitnessOptions) {
+        val googleSignInAccount = GoogleSignIn.getAccountForExtension(this, fitnessOptions)
+
+        GlobalScope.launch(Dispatchers.Main) {
+            val response = Fitness.getHistoryClient(baseContext, googleSignInAccount)
+                .readDailyTotal(DataType.TYPE_STEP_COUNT_DELTA)
+
+            async(Dispatchers.Default) { Tasks.await(response) }.await().let { dataSet ->
+                for (dataPoint in dataSet.dataPoints) {
+                    val total = dataPoint.getValue(Field.FIELD_STEPS)
+                    adapter.addItem(total.toString())
                 }
             }
-
-        Fitness.HistoryApi.readData(sClient, readRequest).setResultCallback(callback)
-
+        }
     }
 }

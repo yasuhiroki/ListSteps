@@ -6,7 +6,7 @@ import android.view.ViewGroup
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 
-class StepsAdapter(private val list: List<String>) : RecyclerView.Adapter<StepViewHolder>() {
+class StepsAdapter(private val list: MutableList<String>) : RecyclerView.Adapter<StepViewHolder>() {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): StepViewHolder {
         val root = LayoutInflater.from(parent.context).inflate(R.layout.row, parent, false)
@@ -20,6 +20,11 @@ class StepsAdapter(private val list: List<String>) : RecyclerView.Adapter<StepVi
 
     override fun onBindViewHolder(holder: StepViewHolder, position: Int) {
         holder.text.text = list[position]
+    }
+
+    fun addItem(str: String): Unit {
+        list.add(str)
+        notifyDataSetChanged()
     }
 }
 
